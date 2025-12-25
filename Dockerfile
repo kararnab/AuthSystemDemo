@@ -1,19 +1,35 @@
-FROM node:14
+# ---- Build stage ----
+FROM golang:1.25-alpine AS builder
 
-# Create app directory
-WORKDIR /usr/src/app
+WORKDIR /app
 
-# Install app dependencies
-# A wildcard is used to ensure both package.json AND package-lock.json are copied
-# where available (npm@5+)
-COPY package*.json ./
+# Install CA certs for HTTPS (needed for go mod)
+RUN apk add --no-cache ca-certificates
 
-RUN npm install
-# If you are building your code for production
-# RUN npm ci --only=production
+# Cache deps
+COPY go.mod go.sum ./
+RUN go mod download
 
-# Bundle app source
-COPY . .
+# Copy source
+COPY cmd ./cmd
+COPY internal ./internal
+COPY pkg ./pkg
+
+# Build a static binary
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -o auth-demo-go ./cmd/server
+
+# ---- Runtime stage ----
+FROM gcr.io/distroless/base-debian12
+
+WORKDIR /app
+
+# Copy binary only
+COPY --from=builder /app/auth-demo-go /app/auth-demo-go
+
+# Run as non-root
+USER nonroot:nonroot
 
 EXPOSE 8080
-CMD [ "node", "src/app.js" ]
+
+ENTRYPOINT ["/app/auth-demo-go"]
